@@ -73,14 +73,14 @@ static bool sc_ready(const char *key)
     return sc_hello(key) == SUPERCALL_HELLO_MAGIC;
 }
 
-static uint32_t sc_kp_ver(const char *key)
+static long sc_kp_ver(const char *key)
 {
-    return (uint32_t)syscall(__NR_supercall, key, ver_and_cmd(SUPERCALL_KERNELPATCH_VER));
+    return syscall(__NR_supercall, key, ver_and_cmd(SUPERCALL_KERNELPATCH_VER));
 }
 
-static uint32_t sc_k_ver(const char *key)
+static long sc_k_ver(const char *key)
 {
-    return (uint32_t)syscall(__NR_supercall, key, ver_and_cmd(SUPERCALL_KERNEL_VER));
+    return syscall(__NR_supercall, key, ver_and_cmd(SUPERCALL_KERNEL_VER));
 }
 
 static long sc_kpm_load(const char *key, const char *path, const char *args)
@@ -126,14 +126,19 @@ static int cmd_hello(const char *key)
         printf("[+] KernelPatch is active! (magic: 0x%lx)\n", ret);
         return 0;
     } else {
-        printf("[-] KernelPatch not detected (ret: %ld, errno: %d)\n", ret, errno);
+        printf("[-] KernelPatch not detected (ret: %ld)\n", ret);
         return 1;
     }
 }
 
 static int cmd_kpver(const char *key)
 {
-    uint32_t ver = sc_kp_ver(key);
+    long ret = sc_kp_ver(key);
+    if (ret < 0) {
+        printf("[-] Failed to get KernelPatch version (ret: %ld)\n", ret);
+        return 1;
+    }
+    uint32_t ver = (uint32_t)ret;
     printf("[*] KernelPatch version: %d.%d.%d (0x%x)\n",
            (ver >> 16) & 0xFF, (ver >> 8) & 0xFF, ver & 0xFF, ver);
     return 0;
@@ -141,7 +146,12 @@ static int cmd_kpver(const char *key)
 
 static int cmd_kver(const char *key)
 {
-    uint32_t ver = sc_k_ver(key);
+    long ret = sc_k_ver(key);
+    if (ret < 0) {
+        printf("[-] Failed to get kernel version (ret: %ld)\n", ret);
+        return 1;
+    }
+    uint32_t ver = (uint32_t)ret;
     printf("[*] Kernel version: %d.%d.%d\n",
            (ver >> 16) & 0xFF, (ver >> 8) & 0xFF, ver & 0xFF);
     return 0;
@@ -159,12 +169,12 @@ static int cmd_load(const char *key, const char *path, const char *args)
         printf("[+] Module loaded successfully!\n");
         return 0;
     } else {
-        printf("[-] Failed to load module (ret: %ld, errno: %d)\n", ret, errno);
-        if (ret == -EEXIST || errno == EEXIST)
+        printf("[-] Failed to load module (ret: %ld)\n", ret);
+        if (ret == -EEXIST)
             printf("    Module with the same name is already loaded\n");
-        else if (ret == -ENOENT || errno == ENOENT)
+        else if (ret == -ENOENT)
             printf("    File not found: %s\n", path);
-        else if (ret == -EPERM || errno == EPERM)
+        else if (ret == -EPERM)
             printf("    Permission denied - check your superkey\n");
         return 1;
     }
@@ -179,7 +189,7 @@ static int cmd_unload(const char *key, const char *name)
         printf("[+] Module unloaded successfully!\n");
         return 0;
     } else {
-        printf("[-] Failed to unload module (ret: %ld, errno: %d)\n", ret, errno);
+        printf("[-] Failed to unload module (ret: %ld)\n", ret);
         return 1;
     }
 }
@@ -200,11 +210,15 @@ static int cmd_list(const char *key)
     }
 
     char buf[BUF_SIZE] = {0};
-    long ret = sc_kpm_list(key, buf, sizeof(buf));
+    long ret = sc_kpm_list(key, buf, sizeof(buf) - 1);
     if (ret < 0) {
         printf("[-] Failed to list modules (ret: %ld)\n", ret);
         return 1;
     }
+
+    /* Ensure NUL termination using returned length */
+    if (ret < (long)sizeof(buf))
+        buf[ret] = '\0';
 
     printf("----------------------------\n");
     /* Module names are newline-separated */
@@ -227,11 +241,14 @@ static int cmd_list(const char *key)
 static int cmd_info(const char *key, const char *name)
 {
     char buf[BUF_SIZE] = {0};
-    long ret = sc_kpm_info(key, name, buf, sizeof(buf));
+    long ret = sc_kpm_info(key, name, buf, sizeof(buf) - 1);
     if (ret < 0) {
         printf("[-] Failed to get info for '%s' (ret: %ld)\n", name, ret);
         return 1;
     }
+
+    if (ret < (long)sizeof(buf))
+        buf[ret] = '\0';
 
     printf("[*] Module info: %s\n", name);
     printf("----------------------------\n");
@@ -248,7 +265,7 @@ static int cmd_control(const char *key, const char *name, const char *ctl_args)
 
     long ret = sc_kpm_control(key, name, ctl_args, out_msg, sizeof(out_msg));
     if (ret < 0) {
-        printf("[-] Control failed (ret: %ld, errno: %d)\n", ret, errno);
+        printf("[-] Control failed (ret: %ld)\n", ret);
         return 1;
     }
 

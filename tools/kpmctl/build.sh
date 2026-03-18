@@ -27,7 +27,15 @@ if [ "$OS" = "Darwin" ]; then
         PLATFORM="darwin-x86_64"
     fi
 elif [ "$OS" = "Linux" ]; then
-    PLATFORM="linux-x86_64"
+    if [ "$ARCH" = "aarch64" ]; then
+        PLATFORM="linux-aarch64"
+        PLATFORM_FALLBACK="linux-x86_64"
+    else
+        PLATFORM="linux-x86_64"
+    fi
+else
+    echo -e "${RED}[-] Unsupported OS: $OS${NC}"
+    exit 1
 fi
 
 # Find NDK

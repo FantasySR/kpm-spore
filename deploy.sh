@@ -144,6 +144,8 @@ echo -e "${BLUE}========================================${NC}"
 echo -e "${BLUE}  Step 3: Push & Load${NC}"
 echo -e "${BLUE}========================================${NC}"
 
+LOAD_FAILURES=0
+
 load_module() {
     local kpm_file="$1"
     local mod_name
@@ -154,7 +156,10 @@ load_module() {
     adb push "$kpm_file" "$device_path"
 
     echo -e "${YELLOW}[*] Loading $mod_name...${NC}"
-    run_kpmctl load "$device_path" || true
+    if ! run_kpmctl load "$device_path"; then
+        echo -e "${RED}[!] Failed to load $mod_name${NC}"
+        LOAD_FAILURES=$((LOAD_FAILURES + 1))
+    fi
 }
 
 if [ -n "$MODULE_NAME" ]; then
@@ -187,4 +192,9 @@ echo -e "${BLUE}========================================${NC}"
 run_kpmctl list
 
 echo ""
-echo -e "${GREEN}[+] Done!${NC}"
+if [ $LOAD_FAILURES -gt 0 ]; then
+    echo -e "${RED}[-] Done with $LOAD_FAILURES load failure(s)${NC}"
+    exit 1
+else
+    echo -e "${GREEN}[+] Done!${NC}"
+fi
