@@ -1,0 +1,5 @@
+set(EXTRA_SOURCES
+    ${CMAKE_SOURCE_DIR}/shared/trace/symbols.c
+    ${CMAKE_SOURCE_DIR}/shared/trace/syscall.c
+)
+set(EXTRA_INCLUDES ${CMAKE_SOURCE_DIR}/shared/trace)
