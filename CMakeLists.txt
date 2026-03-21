@@ -260,6 +260,15 @@ foreach(MODULE_DIR ${MODULE_DIRS})
         list(FILTER MODULE_SOURCES EXCLUDE REGEX ".*/test/.*")
         list(FILTER MODULE_SOURCES EXCLUDE REGEX ".*/debug/.*")
 
+        # Support components.cmake for shared source references
+        set(COMPONENTS_FILE "${MODULE_DIR}/components.cmake")
+        if(EXISTS ${COMPONENTS_FILE})
+            set(EXTRA_SOURCES "")
+            set(EXTRA_INCLUDES "")
+            include(${COMPONENTS_FILE})
+            list(APPEND MODULE_SOURCES ${EXTRA_SOURCES})
+        endif()
+
         if(NOT MODULE_SOURCES)
             message(WARNING "Module ${MODULE_NAME}: no .c files found, skipping")
             continue()
@@ -281,11 +290,18 @@ foreach(MODULE_DIR ${MODULE_DIRS})
             set(MODULE_CFLAGS ${CFLAGS})
         endif()
 
+        # Add extra include directories from components.cmake
+        if(EXTRA_INCLUDES)
+            foreach(inc_dir ${EXTRA_INCLUDES})
+                list(APPEND MODULE_CFLAGS "-I${inc_dir}")
+            endforeach()
+        endif()
+
         # Create object file list
         set(MODULE_OBJS "")
         foreach(source_file ${MODULE_SOURCES})
-            # Get relative path for output naming
-            file(RELATIVE_PATH rel_path "${MODULE_DIR}" "${source_file}")
+            # Get relative path for output naming (use SOURCE_DIR for shared files)
+            file(RELATIVE_PATH rel_path "${CMAKE_SOURCE_DIR}" "${source_file}")
             # Replace path separators and extension
             string(REPLACE "/" "_" obj_name "${rel_path}")
             string(REPLACE ".c" ".o" obj_name "${obj_name}")
