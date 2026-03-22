@@ -5,6 +5,7 @@
 #include <kpmodule.h>
 #include <linux/printk.h>
 #include <linux/string.h>
+#include <kputils.h>
 #include "symbols.h"
 #include "syscall.h"
 #include "setuid.h"
@@ -17,19 +18,12 @@ KPM_LICENSE("GPL v2");
 KPM_AUTHOR("kpm-spore");
 KPM_DESCRIPTION("[UNVERIFIED] Root detection bypass via syscall and VMA hooks");
 
-static void rg_set_out_msg(char *out_msg, int out_len, const char *msg)
+static void rg_set_out_msg(char *__user out_msg, int out_len, const char *msg)
 {
-    int i = 0;
-    if (!out_msg || out_len <= 0) return;
-    if (!msg) {
-        out_msg[0] = '\0';
-        return;
-    }
-    while (i < out_len - 1 && msg[i]) {
-        out_msg[i] = msg[i];
-        i++;
-    }
-    out_msg[i] = '\0';
+    if (!out_msg || out_len <= 0 || !msg) return;
+    int len = 0;
+    while (msg[len] && len < out_len - 1) len++;
+    compat_copy_to_user(out_msg, msg, len + 1);
 }
 
 static int module_initialized = 0;

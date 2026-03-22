@@ -261,10 +261,10 @@ foreach(MODULE_DIR ${MODULE_DIRS})
         list(FILTER MODULE_SOURCES EXCLUDE REGEX ".*/debug/.*")
 
         # Support components.cmake for shared source references
+        set(EXTRA_SOURCES "")
+        set(EXTRA_INCLUDES "")
         set(COMPONENTS_FILE "${MODULE_DIR}/components.cmake")
         if(EXISTS ${COMPONENTS_FILE})
-            set(EXTRA_SOURCES "")
-            set(EXTRA_INCLUDES "")
             include(${COMPONENTS_FILE})
             list(APPEND MODULE_SOURCES ${EXTRA_SOURCES})
         endif()

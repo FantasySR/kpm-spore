@@ -5,6 +5,7 @@
 #include <kpmodule.h>
 #include <linux/printk.h>
 #include <linux/string.h>
+#include <kputils.h>
 #include "symbols.h"
 #include "setuid.h"
 #include "maps.h"
@@ -71,12 +72,9 @@ static long root_setuid_control0(const char *args, char *out_msg, int out_len)
     }
 
     if (out_msg && out_len > 0) {
-        int i = 0;
-        while (i < out_len - 1 && response[i]) {
-            out_msg[i] = response[i];
-            i++;
-        }
-        out_msg[i] = '\0';
+        int len = 0;
+        while (response[len] && len < out_len - 1) len++;
+        compat_copy_to_user(out_msg, response, len + 1);
     }
 
     return SUCCESS;
