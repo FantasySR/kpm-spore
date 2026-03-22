@@ -71,7 +71,19 @@ kpm-spore/
 │   ├── hello/
 │   ├── hidemap/
 │   ├── injectHide/
+│   ├── trace_guard/      # [UNVERIFIED] injection trace hiding (combined)
+│   ├── trace_maps/       # [UNVERIFIED] maps hiding (standalone)
+│   ├── trace_mount/      # [UNVERIFIED] mount hiding (standalone)
+│   ├── trace_syscall/    # [UNVERIFIED] syscall interception (standalone)
+│   ├── trace_debug/      # [UNVERIFIED] debug info hiding (standalone)
+│   ├── root_guard/       # [UNVERIFIED] root detection bypass (combined)
+│   ├── root_maps/        # [UNVERIFIED] VMA maps hiding (standalone)
+│   ├── root_syscall/     # [UNVERIFIED] syscall interception (standalone)
+│   ├── root_setuid/      # [UNVERIFIED] zygote/setuid hook (standalone)
 │   └── template/         # Skeleton for new modules
+├── shared/               # Shared source (not compiled directly)
+│   ├── trace/            # Shared code for trace_guard family
+│   └── root/             # Shared code for root_guard family
 ├── tools/kpmctl/         # CLI loader tool
 ├── third_party/          # KernelPatch source (auto-downloaded)
 ├── build.sh
@@ -79,6 +91,30 @@ kpm-spore/
 ├── new-module.sh
 └── CMakeLists.txt
 ```
+
+## Unverified modules
+
+Modules marked `[UNVERIFIED]` have **not been tested on real devices**. Use at your own risk.
+
+Two module families:
+
+- **trace_guard family** — hides injection traces, mount points, debug info, SELinux context. `trace_guard` bundles everything; you can also load `trace_maps`, `trace_mount`, `trace_syscall`, or `trace_debug` on their own.
+- **root_guard family** — root/Magisk detection bypass via syscall interception and VMA hiding. `root_guard` is the bundle; standalone modules are `root_maps`, `root_syscall`, `root_setuid`.
+
+## Shared source and components.cmake
+
+Modules can reference shared source files via `components.cmake`:
+
+```cmake
+# modules/trace_maps/components.cmake
+set(EXTRA_SOURCES
+    ${CMAKE_SOURCE_DIR}/shared/trace/symbols.c
+    ${CMAKE_SOURCE_DIR}/shared/trace/maps.c
+)
+set(EXTRA_INCLUDES ${CMAKE_SOURCE_DIR}/shared/trace)
+```
+
+The build system automatically loads `components.cmake` and compiles shared sources into the module.
 
 ## Writing a module
 

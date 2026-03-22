@@ -260,6 +260,15 @@ foreach(MODULE_DIR ${MODULE_DIRS})
         list(FILTER MODULE_SOURCES EXCLUDE REGEX ".*/test/.*")
         list(FILTER MODULE_SOURCES EXCLUDE REGEX ".*/debug/.*")
 
+        # Support components.cmake for shared source references
+        set(EXTRA_SOURCES "")
+        set(EXTRA_INCLUDES "")
+        set(COMPONENTS_FILE "${MODULE_DIR}/components.cmake")
+        if(EXISTS ${COMPONENTS_FILE})
+            include(${COMPONENTS_FILE})
+            list(APPEND MODULE_SOURCES ${EXTRA_SOURCES})
+        endif()
+
         if(NOT MODULE_SOURCES)
             message(WARNING "Module ${MODULE_NAME}: no .c files found, skipping")
             continue()
@@ -273,19 +282,27 @@ foreach(MODULE_DIR ${MODULE_DIRS})
             continue()
         endif()
 
+        # Build extra include flags from components.cmake (must come before KP includes)
+        set(EXTRA_INCLUDE_FLAGS "")
+        if(EXTRA_INCLUDES)
+            foreach(inc_dir ${EXTRA_INCLUDES})
+                list(APPEND EXTRA_INCLUDE_FLAGS "-iquote" "${inc_dir}")
+            endforeach()
+        endif()
+
         # Check for custom linker script
         set(MODULE_LDS "${MODULE_DIR}/module.lds")
         if(EXISTS "${MODULE_LDS}")
-            set(MODULE_CFLAGS ${CFLAGS} -T${MODULE_LDS})
+            set(MODULE_CFLAGS ${EXTRA_INCLUDE_FLAGS} ${CFLAGS} -T${MODULE_LDS})
         else()
-            set(MODULE_CFLAGS ${CFLAGS})
+            set(MODULE_CFLAGS ${EXTRA_INCLUDE_FLAGS} ${CFLAGS})
         endif()
 
         # Create object file list
         set(MODULE_OBJS "")
         foreach(source_file ${MODULE_SOURCES})
-            # Get relative path for output naming
-            file(RELATIVE_PATH rel_path "${MODULE_DIR}" "${source_file}")
+            # Get relative path for output naming (use SOURCE_DIR for shared files)
+            file(RELATIVE_PATH rel_path "${CMAKE_SOURCE_DIR}" "${source_file}")
             # Replace path separators and extension
             string(REPLACE "/" "_" obj_name "${rel_path}")
             string(REPLACE ".c" ".o" obj_name "${obj_name}")

@@ -71,7 +71,19 @@ kpm-spore/
 │   ├── hello/
 │   ├── hidemap/
 │   ├── injectHide/
+│   ├── trace_guard/      # [未验证] 注入痕迹隐藏（组合模块）
+│   ├── trace_maps/       # [未验证] maps 隐藏（独立）
+│   ├── trace_mount/      # [未验证] 挂载点隐藏（独立）
+│   ├── trace_syscall/    # [未验证] 系统调用拦截（独立）
+│   ├── trace_debug/      # [未验证] 调试信息隐藏（独立）
+│   ├── root_guard/       # [未验证] Root 检测绕过（组合模块）
+│   ├── root_maps/        # [未验证] VMA maps 隐藏（独立）
+│   ├── root_syscall/     # [未验证] syscall 拦截（独立）
+│   ├── root_setuid/      # [未验证] zygote/setuid hook（独立）
 │   └── template/         # 新模块的骨架
+├── shared/               # 共享源码（不直接编译）
+│   ├── trace/            # trace_guard 家族共享代码
+│   └── root/             # root_guard 家族共享代码
 ├── tools/kpmctl/         # 命令行加载工具
 ├── third_party/          # KernelPatch 源码（自动下载）
 ├── build.sh
@@ -79,6 +91,30 @@ kpm-spore/
 ├── new-module.sh
 └── CMakeLists.txt
 ```
+
+## 未验证模块说明
+
+标记为 `[未验证]` 的模块**没有在真机上跑过**，用之前自己评估一下风险。
+
+两个模块家族：
+
+- **trace_guard 家族** — 隐藏注入痕迹、挂载点、调试信息、SELinux 上下文。`trace_guard` 是全功能组合包，也可以只装 `trace_maps`、`trace_mount`、`trace_syscall`、`trace_debug` 中的某一个。
+- **root_guard 家族** — 绕过 Root/Magisk 检测，走 syscall 拦截 + VMA 隐藏。`root_guard` 是组合包，独立模块有 `root_maps`、`root_syscall`、`root_setuid`。
+
+## 共享源码与 components.cmake
+
+模块可以通过 `components.cmake` 引用 `shared/` 下的共享源文件：
+
+```cmake
+# modules/trace_maps/components.cmake
+set(EXTRA_SOURCES
+    ${CMAKE_SOURCE_DIR}/shared/trace/symbols.c
+    ${CMAKE_SOURCE_DIR}/shared/trace/maps.c
+)
+set(EXTRA_INCLUDES ${CMAKE_SOURCE_DIR}/shared/trace)
+```
+
+构建系统会自动加载 `components.cmake` 并将共享源文件编入模块。
 
 ## 写模块
 
