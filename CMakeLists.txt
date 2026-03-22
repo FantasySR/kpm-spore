@@ -282,19 +282,20 @@ foreach(MODULE_DIR ${MODULE_DIRS})
             continue()
         endif()
 
+        # Build extra include flags from components.cmake (must come before KP includes)
+        set(EXTRA_INCLUDE_FLAGS "")
+        if(EXTRA_INCLUDES)
+            foreach(inc_dir ${EXTRA_INCLUDES})
+                list(APPEND EXTRA_INCLUDE_FLAGS "-iquote" "${inc_dir}")
+            endforeach()
+        endif()
+
         # Check for custom linker script
         set(MODULE_LDS "${MODULE_DIR}/module.lds")
         if(EXISTS "${MODULE_LDS}")
-            set(MODULE_CFLAGS ${CFLAGS} -T${MODULE_LDS})
+            set(MODULE_CFLAGS ${EXTRA_INCLUDE_FLAGS} ${CFLAGS} -T${MODULE_LDS})
         else()
-            set(MODULE_CFLAGS ${CFLAGS})
-        endif()
-
-        # Add extra include directories from components.cmake
-        if(EXTRA_INCLUDES)
-            foreach(inc_dir ${EXTRA_INCLUDES})
-                list(APPEND MODULE_CFLAGS "-I${inc_dir}")
-            endforeach()
+            set(MODULE_CFLAGS ${EXTRA_INCLUDE_FLAGS} ${CFLAGS})
         endif()
 
         # Create object file list
