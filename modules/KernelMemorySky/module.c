@@ -9,8 +9,12 @@
 #include <ktypes.h>
 #include <linux/kallsyms.h>
 #include <linux/fs.h>
-#include <linux/list.h>
-#include <linux/device.h>
+
+/* 前向声明 struct device 和 struct list_head，避免包含 linux/device.h */
+struct device;
+struct list_head {
+    struct list_head *next, *prev;
+};
 
 KPM_NAME("KernelMemorySky");
 KPM_VERSION("1.0.0");
@@ -18,15 +22,14 @@ KPM_LICENSE("GPL v2");
 KPM_AUTHOR("FantasySR");
 KPM_DESCRIPTION("Kernel memory read/write via misc device");
 
-/* ====== 手动补充缺失的宏和类型 ====== */
+/* 手动补充缺失的宏和类型 */
 #define GFP_KERNEL 0xcc0U
 #define FOLL_FORCE 0x10
 #define FOLL_WRITE 0x01
 #define MISC_DYNAMIC_MINOR 255
-
 #define THIS_MODULE ((struct module *)0)
 
-/* 补全 struct file_operations 的定义（仅需用到的成员对齐大小） */
+/* 补全 struct file_operations（同之前） */
 struct file_operations {
     struct module *owner;
     loff_t (*llseek)(struct file *, loff_t, int);
@@ -57,15 +60,11 @@ struct file_operations {
     int (*setlease)(struct file *, long, struct file_lock **, void **);
     long (*fallocate)(struct file *file, int mode, loff_t offset, loff_t len);
     void (*show_fdinfo)(struct seq_file *m, struct file *f);
-#ifndef CONFIG_MMU
-    unsigned (*mmap_capabilities)(struct file *);
-#endif
     ssize_t (*copy_file_range)(struct file *, loff_t, struct file *, loff_t, size_t, unsigned int);
     loff_t (*remap_file_range)(struct file *file_in, loff_t pos_in, struct file *file_out, loff_t pos_out, loff_t len, unsigned int remap_flags);
     int (*fadvise)(struct file *, loff_t, loff_t, int);
 } __randomize_layout;
 
-/* 补全 struct miscdevice */
 struct miscdevice {
     int minor;
     const char *name;
@@ -78,7 +77,7 @@ struct miscdevice {
     umode_t mode;
 };
 
-/* ====== 命令定义 ====== */
+/* 命令定义 */
 #define CMD_READ_MEM  0x1001
 #define CMD_WRITE_MEM 0x1002
 
@@ -89,7 +88,7 @@ struct mem_data {
     void __user *buf;
 };
 
-/* ====== 函数指针类型 ====== */
+/* 函数指针类型 */
 typedef struct task_struct *(*find_task_t)(pid_t);
 typedef struct mm_struct *(*get_task_mm_t)(struct task_struct *);
 typedef void (*mmput_t)(struct mm_struct *);
@@ -112,7 +111,6 @@ static misc_deregister_t misc_deregister_func;
 static kmalloc_t kmalloc_func;
 static kfree_t kfree_func;
 
-/* ====== 设备操作 ====== */
 static int my_open(struct inode *inode, struct file *file)
 {
     printk(KERN_INFO "KernelMemorySky: device opened\n");
@@ -209,7 +207,6 @@ static struct miscdevice my_misc_device = {
     .fops = &my_fops,
 };
 
-/* ====== KPM 入口 ====== */
 static long control0(const char *args, char __user *out_msg, int outlen)
 {
     return 0;
@@ -217,7 +214,6 @@ static long control0(const char *args, char __user *out_msg, int outlen)
 
 static long init(const char *args, const char *event, void __user *reserved)
 {
-    /* 动态查找所有符号 */
     find_task_by_vpid_func = (find_task_t)kallsyms_lookup_name("find_task_by_vpid");
     get_task_mm_func = (get_task_mm_t)kallsyms_lookup_name("get_task_mm");
     mmput_func = (mmput_t)kallsyms_lookup_name("mmput");
@@ -232,18 +228,16 @@ static long init(const char *args, const char *event, void __user *reserved)
     if (!find_task_by_vpid_func || !get_task_mm_func || !mmput_func ||
         !access_process_vm_func || !copy_from_user_func || !copy_to_user_func ||
         !misc_register_func || !misc_deregister_func || !kmalloc_func || !kfree_func) {
-        printk(KERN_ERR "KernelMemorySky: Failed to find required kernel symbols\n");
+        printk(KERN_ERR "KernelMemorySky: symbol lookup failed\n");
         return -1;
     }
 
     int ret = misc_register_func(&my_misc_device);
     if (ret < 0) {
-        printk(KERN_ERR "KernelMemorySky: misc_register failed, ret=%d\n", ret);
+        printk(KERN_ERR "KernelMemorySky: register failed\n");
         return ret;
     }
-
-    printk(KERN_INFO "KernelMemorySky: /dev/%s registered, minor=%d\n",
-           my_misc_device.name, my_misc_device.minor);
+    printk(KERN_INFO "KernelMemorySky: /dev/%s registered\n", my_misc_device.name);
     return 0;
 }
 
