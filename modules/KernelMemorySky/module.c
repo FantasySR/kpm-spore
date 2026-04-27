@@ -1,111 +1,219 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
-/* 
- * KPM Module Template
- * 使用说明:
- * 1. 复制 template 目录并重命名为你的模块名
- * 2. 修改此文件，实现你的功能
- * 3. 运行 ./build.sh 自动构建所有模块
- */
-
 #include <compiler.h>
 #include <kpmodule.h>
 #include <linux/printk.h>
-#include <common.h>
-#include <kputils.h>
-#include <linux/string.h>
+#include <linux/uaccess.h>
+#include <linux/errno.h>
+#include <linux/sched/mm.h>
+#include <linux/sched.h>
+#include <linux/err.h>
+#include <hook.h>
+#include <ktypes.h>
+#include <linux/kallsyms.h>
+#include <linux/fs.h>
 
-// TODO: 修改为你的模块名（必须唯一）
-KPM_NAME("kpm-template");
-
-// TODO: 修改版本号
+KPM_NAME("KernelMemorySky");
 KPM_VERSION("1.0.0");
-
-// TODO: 修改许可证（推荐 GPL v2）
 KPM_LICENSE("GPL v2");
+KPM_AUTHOR("FantasySR");
+KPM_DESCRIPTION("Kernel memory read/write via misc device");
 
-// TODO: 修改作者信息
-KPM_AUTHOR("Your Name");
+#define DEVICE_NAME "my_misc_device"
 
-// TODO: 修改模块描述
-KPM_DESCRIPTION("KPM Template Module");
+// ---------- 命令定义 ----------
+#define CMD_READ_MEM  0x1001
+#define CMD_WRITE_MEM 0x1002
 
-/**
- * @brief 模块初始化函数
- * @details 在模块加载时调用
- * 
- * @param args 初始化参数
- * @param event 事件类型
- * @param reserved 保留参数
- * @return 0 表示成功，负数表示失败
- */
-static long template_init(const char *args, const char *event, void *__user reserved)
+struct mem_data {
+    pid_t pid;
+    unsigned long addr;
+    unsigned long size;
+    void __user *buf;
+};
+
+// ---------- 内核函数指针 ----------
+typedef struct task_struct *(*find_task_by_vpid_t)(pid_t pid);
+typedef struct mm_struct *(*get_task_mm_t)(struct task_struct *task);
+typedef void (*mmput_ptr)(struct mm_struct *mm);
+typedef int (*access_process_vm_t)(struct task_struct *tsk, unsigned long addr,
+                                   void *buf, int len, unsigned int gup_flags);
+typedef unsigned long (*copy_from_user_t)(void *to, const void __user *from, unsigned long n);
+typedef unsigned long (*copy_to_user_t)(void __user *to, const void *from, unsigned long n);
+
+static find_task_by_vpid_t find_task_by_vpid_func;
+static get_task_mm_t get_task_mm_func;
+static mmput_ptr mmput_func;
+static access_process_vm_t access_process_vm_func;
+static copy_from_user_t copy_from_user_func;
+static copy_to_user_t copy_to_user_func;
+
+// ---------- 杂项设备相关 ----------
+#ifdef MODULE
+struct module __this_module;
+#define THIS_MODULE (&__this_module)
+#else
+#define THIS_MODULE ((struct module *)0)
+#endif
+
+struct miscdevice {
+    int minor;
+    const char *name;
+    const struct file_operations *fops;
+    struct list_head list;
+    struct device *parent;
+    struct device *this_device;
+    const struct attribute_group **groups;
+    const char *nodename;
+    umode_t mode;
+};
+
+typedef int (*misc_register_t)(struct miscdevice *misc);
+typedef void (*misc_deregister_t)(struct miscdevice *misc);
+static misc_register_t misc_register_func;
+static misc_deregister_t misc_deregister_func;
+
+// ---------- 设备操作函数 ----------
+static int my_misc_open(struct inode *inode, struct file *file)
 {
-    pr_info("kpm template init, event: %s, args: %s\n", event, args);
-    pr_info("kernelpatch version: %x\n", kpver);
-    
-    // TODO: 在这里添加你的初始化代码
-    
+    pr_info("KernelMemorySky: device opened\n");
     return 0;
 }
 
-/**
- * @brief 控制函数0
- * @details 用于处理用户空间的控制请求
- * 
- * @param args 输入参数
- * @param out_msg 输出消息缓冲区
- * @param outlen 输出缓冲区长度
- * @return 0 表示成功，负数表示失败
- */
-static long template_control0(const char *args, char *__user out_msg, int outlen)
+static int my_misc_release(struct inode *inode, struct file *file)
 {
-    pr_info("kpm template control0, args: %s\n", args);
-    
-    // TODO: 实现你的控制逻辑
-    char response[64] = "template response: ";
-    strncat(response, args, 40);
-    compat_copy_to_user(out_msg, response, sizeof(response));
-    
+    pr_info("KernelMemorySky: device closed\n");
     return 0;
 }
 
-/**
- * @brief 控制函数1
- * @details 用于处理带三个参数的控制请求
- * 
- * @param a1 参数1
- * @param a2 参数2
- * @param a3 参数3
- * @return 0 表示成功，负数表示失败
- */
-static long template_control1(void *a1, void *a2, void *a3)
+// ---------- ioctl 分发（核心读写逻辑） ----------
+static long dispatch_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
-    pr_info("kpm template control1, a1: %llx, a2: %llx, a3: %llx\n", a1, a2, a3);
-    
-    // TODO: 实现你的控制逻辑
-    
+    struct mem_data __user *user_data = (struct mem_data __user *)arg;
+    struct mem_data data;
+    struct task_struct *task;
+    struct mm_struct *mm;
+    void *kbuf = NULL;
+    long ret = 0;
+    int bytes;
+
+    if (!user_data)
+        return -EINVAL;
+
+    if (copy_from_user_func(&data, user_data, sizeof(data)))
+        return -EFAULT;
+
+    if (data.size > 0x100000)
+        return -EINVAL;
+
+    // 获取目标进程 mm
+    task = find_task_by_vpid_func(data.pid);
+    if (!task)
+        return -ESRCH;
+
+    mm = get_task_mm_func(task);
+    if (!mm)
+        return -EINVAL;
+
+    kbuf = kmalloc(data.size, GFP_KERNEL);
+    if (!kbuf) {
+        mmput_func(mm);
+        return -ENOMEM;
+    }
+
+    switch (cmd) {
+    case CMD_READ_MEM:
+        bytes = access_process_vm_func(task, data.addr, kbuf, data.size, 0x10 /* FOLL_FORCE */);
+        if (bytes > 0) {
+            if (copy_to_user_func(data.buf, kbuf, bytes))
+                ret = -EFAULT;
+            else
+                ret = bytes;
+        } else if (bytes == 0) {
+            ret = 0;
+        } else {
+            ret = bytes;
+        }
+        break;
+
+    case CMD_WRITE_MEM:
+        if (copy_from_user_func(kbuf, data.buf, data.size)) {
+            ret = -EFAULT;
+            break;
+        }
+        bytes = access_process_vm_func(task, data.addr, kbuf, data.size,
+                                       0x10 | 0x01 /* FOLL_FORCE | FOLL_WRITE */);
+        if (bytes >= 0)
+            ret = bytes;
+        else
+            ret = bytes;
+        break;
+
+    default:
+        ret = -ENOTTY;
+        break;
+    }
+
+    kfree(kbuf);
+    mmput_func(mm);
+    return ret;
+}
+
+static struct file_operations my_fops = {
+    .owner = THIS_MODULE,
+    .open = my_misc_open,
+    .release = my_misc_release,
+    .unlocked_ioctl = dispatch_ioctl,
+};
+
+static struct miscdevice my_misc_device = {
+    .minor = MISC_DYNAMIC_MINOR,
+    .name = DEVICE_NAME,
+    .fops = &my_fops,
+};
+
+// ---------- KPM 控制入口（保留，可备用） ----------
+static long syscall_hook_control0(const char *args, char *__user out_msg, int outlen)
+{
     return 0;
 }
 
-/**
- * @brief 模块退出函数
- * @details 在模块卸载时调用
- * 
- * @param reserved 保留参数
- * @return 0 表示成功，负数表示失败
- */
-static long template_exit(void *__user reserved)
+// ---------- 模块初始化/退出 ----------
+static long syscall_hook_demo_init(const char *args, const char *event, void *__user reserved)
 {
-    pr_info("kpm template exit\n");
-    
-    // TODO: 在这里添加你的清理代码
-    
+    // 动态查找所需符号
+    find_task_by_vpid_func = (find_task_by_vpid_t)kallsyms_lookup_name("find_task_by_vpid");
+    get_task_mm_func = (get_task_mm_t)kallsyms_lookup_name("get_task_mm");
+    mmput_func = (mmput_ptr)kallsyms_lookup_name("mmput");
+    access_process_vm_func = (access_process_vm_t)kallsyms_lookup_name("access_process_vm");
+    copy_from_user_func = (copy_from_user_t)kallsyms_lookup_name("copy_from_user");
+    copy_to_user_func = (copy_to_user_t)kallsyms_lookup_name("copy_to_user");
+    misc_register_func = (misc_register_t)kallsyms_lookup_name("misc_register");
+    misc_deregister_func = (misc_deregister_t)kallsyms_lookup_name("misc_deregister");
+
+    if (!find_task_by_vpid_func || !get_task_mm_func || !mmput_func ||
+        !access_process_vm_func || !copy_from_user_func || !copy_to_user_func ||
+        !misc_register_func || !misc_deregister_func) {
+        pr_err("KernelMemorySky: Failed to find required kernel symbols\n");
+        return -1;
+    }
+
+    int ret = misc_register_func(&my_misc_device);
+    if (ret < 0) {
+        pr_err("KernelMemorySky: Failed to register misc device, ret=%d\n", ret);
+        return ret;
+    }
+
+    pr_info("KernelMemorySky: device /dev/%s registered, minor=%d\n", DEVICE_NAME, my_misc_device.minor);
     return 0;
 }
 
-// 注册回调函数
-KPM_INIT(template_init);
-KPM_CTL0(template_control0);
-KPM_CTL1(template_control1);
-KPM_EXIT(template_exit);
+static long syscall_hook_demo_exit(void *__user reserved)
+{
+    if (misc_deregister_func)
+        misc_deregister_func(&my_misc_device);
+    pr_info("KernelMemorySky: device unregistered\n");
+    return 0;
+}
 
+KPM_INIT(syscall_hook_demo_init);
+KPM_CTL0(syscall_hook_control0);
+KPM_EXIT(syscall_hook_demo_exit);
