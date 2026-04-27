@@ -3,7 +3,8 @@
 #include <hook.h>
 #include <linux/printk.h>
 #include <linux/kallsyms.h>
-#include <linux/uaccess.h>  // 为了一些类型定义
+#include <linux/sched.h>      // <-- 加上这个就有 current 了
+#include <linux/uaccess.h>    // 为了一些类型定义
 
 KPM_NAME("KernelMemorySky");
 KPM_VERSION("1.0.0");
@@ -17,7 +18,7 @@ static uintptr_t addr_pwrite64;
 static uintptr_t addr_process_vm_readv;
 static uintptr_t addr_process_vm_writev;
 
-/* ---- 记录拦截信息的回调 ---- */
+/* ---- 记录拦截信息的回调 (只打印参数，不碰用户态数据，绝对安全) ---- */
 static void before_pread64(hook_fargs4_t *fargs, void *udata)
 {
     pid_t pid = current->pid;
@@ -86,7 +87,7 @@ static long my_init(const char *args, const char *event, void __user *reserved)
         return -1;
     }
 
-    // 安装钩子 (fp_hook_wrap 自动调用原函数)
+    // 安装钩子 (fp_hook_wrap 内部会调用原函数)
     err = fp_hook_wrap4(addr_pread64, before_pread64, NULL, NULL);
     if (err) { printk(KERN_ERR "KMS: hook pread64 failed %d\n", err); return err; }
 
