@@ -7,6 +7,7 @@
 #include <linux/sched/mm.h>
 #include <linux/mm.h>
 #include <linux/slab.h>
+#include <linux/gfp.h>
 
 KPM_NAME("KernelMemorySky");
 KPM_VERSION("1.0.0");
@@ -14,15 +15,36 @@ KPM_LICENSE("GPL v2");
 KPM_AUTHOR("FantasySR");
 KPM_DESCRIPTION("Kernel memory r/w via KPM_CTL0");
 
-/* 用 kfunc_def 声明所需的内核函数，KernelPatch 自动绑定 */
-kfunc_def(find_task_by_vpid)
-kfunc_def(get_task_mm)
-kfunc_def(mmput)
-kfunc_def(access_process_vm)
-kfunc_def(copy_from_user)
-kfunc_def(copy_to_user)
-kfunc_def(kmalloc)
-kfunc_def(kfree)
+/* 手动声明 KernelPatch 风格的内核函数指针 */
+extern typeof(find_task_by_vpid) *kf_find_task_by_vpid;
+extern typeof(get_task_mm)      *kf_get_task_mm;
+extern typeof(mmput)            *kf_mmput;
+extern typeof(access_process_vm) *kf_access_process_vm;
+extern typeof(copy_from_user)   *kf_copy_from_user;
+extern typeof(copy_to_user)     *kf_copy_to_user;
+extern typeof(kmalloc)          *kf_kmalloc;
+extern typeof(kfree)            *kf_kfree;
+
+/* 将函数调用重定向到函数指针 */
+#define find_task_by_vpid   (*kf_find_task_by_vpid)
+#define get_task_mm         (*kf_get_task_mm)
+#define mmput               (*kf_mmput)
+#define access_process_vm   (*kf_access_process_vm)
+#define copy_from_user      (*kf_copy_from_user)
+#define copy_to_user        (*kf_copy_to_user)
+#define kmalloc             (*kf_kmalloc)
+#define kfree               (*kf_kfree)
+
+/* 缺失的宏 */
+#ifndef GFP_KERNEL
+#define GFP_KERNEL 0xcc0U
+#endif
+#ifndef FOLL_FORCE
+#define FOLL_FORCE 0x10
+#endif
+#ifndef FOLL_WRITE
+#define FOLL_WRITE 0x01
+#endif
 
 /* 命令定义 */
 #define CMD_READ_MEM  0x1001
@@ -49,7 +71,6 @@ static long amf_ctl0(const char *args, char __user *out_msg, int outlen)
     if (!args || outlen < sizeof(cmd))
         return -EINVAL;
 
-    /* 获取命令 */
     if (copy_from_user(&cmd, args, sizeof(cmd)))
         return -EFAULT;
 
