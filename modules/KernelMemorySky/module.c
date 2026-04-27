@@ -1,110 +1,111 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-/* WARNING: This module has not been verified on real devices */
+/* 
+ * KPM Module Template
+ * 使用说明:
+ * 1. 复制 template 目录并重命名为你的模块名
+ * 2. 修改此文件，实现你的功能
+ * 3. 运行 ./build.sh 自动构建所有模块
+ */
 
 #include <compiler.h>
 #include <kpmodule.h>
 #include <linux/printk.h>
-#include <linux/string.h>
 #include <common.h>
 #include <kputils.h>
+#include <linux/string.h>
 
-#include "symbols.h"
-#include "syscall.h"
+// TODO: 修改为你的模块名（必须唯一）
+KPM_NAME("kpm-template");
 
-KPM_NAME("kpm-trace-syscall");
-KPM_VERSION("0.1.0");
+// TODO: 修改版本号
+KPM_VERSION("1.0.0");
+
+// TODO: 修改许可证（推荐 GPL v2）
 KPM_LICENSE("GPL v2");
-KPM_AUTHOR("kpm-spore");
-KPM_DESCRIPTION("[UNVERIFIED] Syscall interception for hiding sensitive paths and SELinux context");
 
-static long trace_syscall_init(const char *args, const char *event, void *__user reserved)
+// TODO: 修改作者信息
+KPM_AUTHOR("Your Name");
+
+// TODO: 修改模块描述
+KPM_DESCRIPTION("KPM Template Module");
+
+/**
+ * @brief 模块初始化函数
+ * @details 在模块加载时调用
+ * 
+ * @param args 初始化参数
+ * @param event 事件类型
+ * @param reserved 保留参数
+ * @return 0 表示成功，负数表示失败
+ */
+static long template_init(const char *args, const char *event, void *__user reserved)
 {
-    int ret;
-
-    pr_info("[trace] trace_syscall module loading...\n");
-
-    ret = init_kernel_offsets();
-    if (ret != SUCCESS) {
-        pr_err("[trace] failed to init kernel offsets\n");
-    }
-
-    ret = init_symbols();
-    if (ret != SUCCESS) {
-        pr_err("[trace] failed to init symbols\n");
-        return ret;
-    }
-
-    ret = install_syscall_hooks();
-    if (ret == SUCCESS) {
-        pr_info("[trace] syscall hooks: enabled\n");
-    } else {
-        pr_err("[trace] syscall hooks: failed\n");
-    }
-
-    pr_info("[trace] trace_syscall loaded\n");
+    pr_info("kpm template init, event: %s, args: %s\n", event, args);
+    pr_info("kernelpatch version: %x\n", kpver);
+    
+    // TODO: 在这里添加你的初始化代码
+    
     return 0;
 }
 
-static long trace_syscall_control0(const char *args, char *__user out_msg, int outlen)
+/**
+ * @brief 控制函数0
+ * @details 用于处理用户空间的控制请求
+ * 
+ * @param args 输入参数
+ * @param out_msg 输出消息缓冲区
+ * @param outlen 输出缓冲区长度
+ * @return 0 表示成功，负数表示失败
+ */
+static long template_control0(const char *args, char *__user out_msg, int outlen)
 {
-    const char *response = "trace_syscall: syscall=0|1, readlink/getdents/truncate/fgetxattr/getsockopt=0|1";
-
-    if (!args) args = "";
-
-    if (strncmp(args, "syscall=1", 9) == 0) {
-        set_syscall_enabled(1);
-        response = "syscall: enabled";
-    } else if (strncmp(args, "syscall=0", 9) == 0) {
-        set_syscall_enabled(0);
-        response = "syscall: disabled";
-    } else if (strncmp(args, "readlink=1", 10) == 0) {
-        set_readlink_enabled(1);
-        response = "readlink: enabled";
-    } else if (strncmp(args, "readlink=0", 10) == 0) {
-        set_readlink_enabled(0);
-        response = "readlink: disabled";
-    } else if (strncmp(args, "getdents=1", 10) == 0) {
-        set_getdents_enabled(1);
-        response = "getdents: enabled";
-    } else if (strncmp(args, "getdents=0", 10) == 0) {
-        set_getdents_enabled(0);
-        response = "getdents: disabled";
-    } else if (strncmp(args, "truncate=1", 10) == 0) {
-        set_truncate_enabled(1);
-        response = "truncate: enabled";
-    } else if (strncmp(args, "truncate=0", 10) == 0) {
-        set_truncate_enabled(0);
-        response = "truncate: disabled";
-    } else if (strncmp(args, "fgetxattr=1", 11) == 0) {
-        set_fgetxattr_enabled(1);
-        response = "fgetxattr: enabled";
-    } else if (strncmp(args, "fgetxattr=0", 11) == 0) {
-        set_fgetxattr_enabled(0);
-        response = "fgetxattr: disabled";
-    } else if (strncmp(args, "getsockopt=1", 12) == 0) {
-        set_getsockopt_enabled(1);
-        response = "getsockopt: enabled";
-    } else if (strncmp(args, "getsockopt=0", 12) == 0) {
-        set_getsockopt_enabled(0);
-        response = "getsockopt: disabled";
-    }
-
-    if (out_msg && outlen > 0) {
-        int len = strlen(response) + 1;
-        int copy_len = (len < outlen) ? len : outlen;
-        compat_copy_to_user(out_msg, response, copy_len);
-    }
-
+    pr_info("kpm template control0, args: %s\n", args);
+    
+    // TODO: 实现你的控制逻辑
+    char response[64] = "template response: ";
+    strncat(response, args, 40);
+    compat_copy_to_user(out_msg, response, sizeof(response));
+    
     return 0;
 }
 
-static long trace_syscall_exit(void *__user reserved)
+/**
+ * @brief 控制函数1
+ * @details 用于处理带三个参数的控制请求
+ * 
+ * @param a1 参数1
+ * @param a2 参数2
+ * @param a3 参数3
+ * @return 0 表示成功，负数表示失败
+ */
+static long template_control1(void *a1, void *a2, void *a3)
 {
-    uninstall_syscall_hooks();
-    pr_info("[trace] trace_syscall unloaded\n");
+    pr_info("kpm template control1, a1: %llx, a2: %llx, a3: %llx\n", a1, a2, a3);
+    
+    // TODO: 实现你的控制逻辑
+    
     return 0;
 }
 
-KPM_INIT(trace_syscall_init);
-KPM_CTL0(trace_syscall_control0);
-KPM_EXIT(trace_syscall_exit);
+/**
+ * @brief 模块退出函数
+ * @details 在模块卸载时调用
+ * 
+ * @param reserved 保留参数
+ * @return 0 表示成功，负数表示失败
+ */
+static long template_exit(void *__user reserved)
+{
+    pr_info("kpm template exit\n");
+    
+    // TODO: 在这里添加你的清理代码
+    
+    return 0;
+}
+
+// 注册回调函数
+KPM_INIT(template_init);
+KPM_CTL0(template_control0);
+KPM_CTL1(template_control1);
+KPM_EXIT(template_exit);
+
