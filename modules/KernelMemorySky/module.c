@@ -3,13 +3,14 @@
 #include <linux/printk.h>
 #include <linux/uaccess.h>
 #include <linux/errno.h>
-#include <linux/sched/mm.h>
 #include <linux/sched.h>
 #include <linux/err.h>
 #include <hook.h>
 #include <ktypes.h>
 #include <linux/kallsyms.h>
 #include <linux/fs.h>
+#include <linux/list.h>
+#include <linux/device.h>
 
 KPM_NAME("KernelMemorySky");
 KPM_VERSION("1.0.0");
@@ -17,43 +18,54 @@ KPM_LICENSE("GPL v2");
 KPM_AUTHOR("FantasySR");
 KPM_DESCRIPTION("Kernel memory read/write via misc device");
 
-#define DEVICE_NAME "my_misc_device"
+/* ====== 手动补充缺失的宏和类型 ====== */
+#define GFP_KERNEL 0xcc0U
+#define FOLL_FORCE 0x10
+#define FOLL_WRITE 0x01
+#define MISC_DYNAMIC_MINOR 255
 
-// ---------- 命令定义 ----------
-#define CMD_READ_MEM  0x1001
-#define CMD_WRITE_MEM 0x1002
-
-struct mem_data {
-    pid_t pid;
-    unsigned long addr;
-    unsigned long size;
-    void __user *buf;
-};
-
-// ---------- 内核函数指针 ----------
-typedef struct task_struct *(*find_task_by_vpid_t)(pid_t pid);
-typedef struct mm_struct *(*get_task_mm_t)(struct task_struct *task);
-typedef void (*mmput_ptr)(struct mm_struct *mm);
-typedef int (*access_process_vm_t)(struct task_struct *tsk, unsigned long addr,
-                                   void *buf, int len, unsigned int gup_flags);
-typedef unsigned long (*copy_from_user_t)(void *to, const void __user *from, unsigned long n);
-typedef unsigned long (*copy_to_user_t)(void __user *to, const void *from, unsigned long n);
-
-static find_task_by_vpid_t find_task_by_vpid_func;
-static get_task_mm_t get_task_mm_func;
-static mmput_ptr mmput_func;
-static access_process_vm_t access_process_vm_func;
-static copy_from_user_t copy_from_user_func;
-static copy_to_user_t copy_to_user_func;
-
-// ---------- 杂项设备相关 ----------
-#ifdef MODULE
-struct module __this_module;
-#define THIS_MODULE (&__this_module)
-#else
 #define THIS_MODULE ((struct module *)0)
-#endif
 
+/* 补全 struct file_operations 的定义（仅需用到的成员对齐大小） */
+struct file_operations {
+    struct module *owner;
+    loff_t (*llseek)(struct file *, loff_t, int);
+    ssize_t (*read)(struct file *, char __user *, size_t, loff_t *);
+    ssize_t (*write)(struct file *, const char __user *, size_t, loff_t *);
+    ssize_t (*read_iter)(struct kiocb *, struct iov_iter *);
+    ssize_t (*write_iter)(struct kiocb *, struct iov_iter *);
+    int (*iopoll)(struct kiocb *kiocb, bool spin);
+    int (*iterate)(struct file *, struct dir_context *);
+    int (*iterate_shared)(struct file *, struct dir_context *);
+    __poll_t (*poll)(struct file *, struct poll_table_struct *);
+    long (*unlocked_ioctl)(struct file *, unsigned int, unsigned long);
+    long (*compat_ioctl)(struct file *, unsigned int, unsigned long);
+    int (*mmap)(struct file *, struct vm_area_struct *);
+    unsigned long mmap_supported_flags;
+    int (*open)(struct inode *, struct file *);
+    int (*flush)(struct file *, fl_owner_t id);
+    int (*release)(struct inode *, struct file *);
+    int (*fsync)(struct file *, loff_t, loff_t, int datasync);
+    int (*fasync)(int, struct file *, int);
+    int (*lock)(struct file *, int, struct file_lock *);
+    ssize_t (*sendpage)(struct file *, struct page *, int, size_t, loff_t *, int);
+    unsigned long (*get_unmapped_area)(struct file *, unsigned long, unsigned long, unsigned long, unsigned long);
+    int (*check_flags)(int);
+    int (*flock)(struct file *, int, struct file_lock *);
+    ssize_t (*splice_write)(struct pipe_inode_info *, struct file *, loff_t *, size_t, unsigned int);
+    ssize_t (*splice_read)(struct file *, loff_t *, struct pipe_inode_info *, size_t, unsigned int);
+    int (*setlease)(struct file *, long, struct file_lock **, void **);
+    long (*fallocate)(struct file *file, int mode, loff_t offset, loff_t len);
+    void (*show_fdinfo)(struct seq_file *m, struct file *f);
+#ifndef CONFIG_MMU
+    unsigned (*mmap_capabilities)(struct file *);
+#endif
+    ssize_t (*copy_file_range)(struct file *, loff_t, struct file *, loff_t, size_t, unsigned int);
+    loff_t (*remap_file_range)(struct file *file_in, loff_t pos_in, struct file *file_out, loff_t pos_out, loff_t len, unsigned int remap_flags);
+    int (*fadvise)(struct file *, loff_t, loff_t, int);
+} __randomize_layout;
+
+/* 补全 struct miscdevice */
 struct miscdevice {
     int minor;
     const char *name;
@@ -66,25 +78,53 @@ struct miscdevice {
     umode_t mode;
 };
 
-typedef int (*misc_register_t)(struct miscdevice *misc);
-typedef void (*misc_deregister_t)(struct miscdevice *misc);
+/* ====== 命令定义 ====== */
+#define CMD_READ_MEM  0x1001
+#define CMD_WRITE_MEM 0x1002
+
+struct mem_data {
+    pid_t pid;
+    unsigned long addr;
+    unsigned long size;
+    void __user *buf;
+};
+
+/* ====== 函数指针类型 ====== */
+typedef struct task_struct *(*find_task_t)(pid_t);
+typedef struct mm_struct *(*get_task_mm_t)(struct task_struct *);
+typedef void (*mmput_t)(struct mm_struct *);
+typedef int (*access_process_vm_t)(struct task_struct *, unsigned long, void *, int, unsigned int);
+typedef unsigned long (*copy_from_user_t)(void *, const void __user *, unsigned long);
+typedef unsigned long (*copy_to_user_t)(void __user *, const void *, unsigned long);
+typedef int (*misc_register_t)(struct miscdevice *);
+typedef void (*misc_deregister_t)(struct miscdevice *);
+typedef void *(*kmalloc_t)(size_t, gfp_t);
+typedef void (*kfree_t)(const void *);
+
+static find_task_t find_task_by_vpid_func;
+static get_task_mm_t get_task_mm_func;
+static mmput_t mmput_func;
+static access_process_vm_t access_process_vm_func;
+static copy_from_user_t copy_from_user_func;
+static copy_to_user_t copy_to_user_func;
 static misc_register_t misc_register_func;
 static misc_deregister_t misc_deregister_func;
+static kmalloc_t kmalloc_func;
+static kfree_t kfree_func;
 
-// ---------- 设备操作函数 ----------
-static int my_misc_open(struct inode *inode, struct file *file)
+/* ====== 设备操作 ====== */
+static int my_open(struct inode *inode, struct file *file)
 {
-    pr_info("KernelMemorySky: device opened\n");
+    printk(KERN_INFO "KernelMemorySky: device opened\n");
     return 0;
 }
 
-static int my_misc_release(struct inode *inode, struct file *file)
+static int my_release(struct inode *inode, struct file *file)
 {
-    pr_info("KernelMemorySky: device closed\n");
+    printk(KERN_INFO "KernelMemorySky: device closed\n");
     return 0;
 }
 
-// ---------- ioctl 分发（核心读写逻辑） ----------
 static long dispatch_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
     struct mem_data __user *user_data = (struct mem_data __user *)arg;
@@ -104,7 +144,6 @@ static long dispatch_ioctl(struct file *file, unsigned int cmd, unsigned long ar
     if (data.size > 0x100000)
         return -EINVAL;
 
-    // 获取目标进程 mm
     task = find_task_by_vpid_func(data.pid);
     if (!task)
         return -ESRCH;
@@ -113,7 +152,7 @@ static long dispatch_ioctl(struct file *file, unsigned int cmd, unsigned long ar
     if (!mm)
         return -EINVAL;
 
-    kbuf = kmalloc(data.size, GFP_KERNEL);
+    kbuf = kmalloc_func(data.size, GFP_KERNEL);
     if (!kbuf) {
         mmput_func(mm);
         return -ENOMEM;
@@ -121,7 +160,7 @@ static long dispatch_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 
     switch (cmd) {
     case CMD_READ_MEM:
-        bytes = access_process_vm_func(task, data.addr, kbuf, data.size, 0x10 /* FOLL_FORCE */);
+        bytes = access_process_vm_func(task, data.addr, kbuf, data.size, FOLL_FORCE);
         if (bytes > 0) {
             if (copy_to_user_func(data.buf, kbuf, bytes))
                 ret = -EFAULT;
@@ -140,7 +179,7 @@ static long dispatch_ioctl(struct file *file, unsigned int cmd, unsigned long ar
             break;
         }
         bytes = access_process_vm_func(task, data.addr, kbuf, data.size,
-                                       0x10 | 0x01 /* FOLL_FORCE | FOLL_WRITE */);
+                                       FOLL_FORCE | FOLL_WRITE);
         if (bytes >= 0)
             ret = bytes;
         else
@@ -152,68 +191,70 @@ static long dispatch_ioctl(struct file *file, unsigned int cmd, unsigned long ar
         break;
     }
 
-    kfree(kbuf);
+    kfree_func(kbuf);
     mmput_func(mm);
     return ret;
 }
 
 static struct file_operations my_fops = {
     .owner = THIS_MODULE,
-    .open = my_misc_open,
-    .release = my_misc_release,
+    .open = my_open,
+    .release = my_release,
     .unlocked_ioctl = dispatch_ioctl,
 };
 
 static struct miscdevice my_misc_device = {
     .minor = MISC_DYNAMIC_MINOR,
-    .name = DEVICE_NAME,
+    .name = "my_misc_device",
     .fops = &my_fops,
 };
 
-// ---------- KPM 控制入口（保留，可备用） ----------
-static long syscall_hook_control0(const char *args, char *__user out_msg, int outlen)
+/* ====== KPM 入口 ====== */
+static long control0(const char *args, char __user *out_msg, int outlen)
 {
     return 0;
 }
 
-// ---------- 模块初始化/退出 ----------
-static long syscall_hook_demo_init(const char *args, const char *event, void *__user reserved)
+static long init(const char *args, const char *event, void __user *reserved)
 {
-    // 动态查找所需符号
-    find_task_by_vpid_func = (find_task_by_vpid_t)kallsyms_lookup_name("find_task_by_vpid");
+    /* 动态查找所有符号 */
+    find_task_by_vpid_func = (find_task_t)kallsyms_lookup_name("find_task_by_vpid");
     get_task_mm_func = (get_task_mm_t)kallsyms_lookup_name("get_task_mm");
-    mmput_func = (mmput_ptr)kallsyms_lookup_name("mmput");
+    mmput_func = (mmput_t)kallsyms_lookup_name("mmput");
     access_process_vm_func = (access_process_vm_t)kallsyms_lookup_name("access_process_vm");
     copy_from_user_func = (copy_from_user_t)kallsyms_lookup_name("copy_from_user");
     copy_to_user_func = (copy_to_user_t)kallsyms_lookup_name("copy_to_user");
     misc_register_func = (misc_register_t)kallsyms_lookup_name("misc_register");
     misc_deregister_func = (misc_deregister_t)kallsyms_lookup_name("misc_deregister");
+    kmalloc_func = (kmalloc_t)kallsyms_lookup_name("kmalloc");
+    kfree_func = (kfree_t)kallsyms_lookup_name("kfree");
 
     if (!find_task_by_vpid_func || !get_task_mm_func || !mmput_func ||
         !access_process_vm_func || !copy_from_user_func || !copy_to_user_func ||
-        !misc_register_func || !misc_deregister_func) {
-        pr_err("KernelMemorySky: Failed to find required kernel symbols\n");
+        !misc_register_func || !misc_deregister_func || !kmalloc_func || !kfree_func) {
+        printk(KERN_ERR "KernelMemorySky: Failed to find required kernel symbols\n");
         return -1;
     }
 
     int ret = misc_register_func(&my_misc_device);
     if (ret < 0) {
-        pr_err("KernelMemorySky: Failed to register misc device, ret=%d\n", ret);
+        printk(KERN_ERR "KernelMemorySky: misc_register failed, ret=%d\n", ret);
         return ret;
     }
 
-    pr_info("KernelMemorySky: device /dev/%s registered, minor=%d\n", DEVICE_NAME, my_misc_device.minor);
+    printk(KERN_INFO "KernelMemorySky: /dev/%s registered, minor=%d\n",
+           my_misc_device.name, my_misc_device.minor);
     return 0;
 }
 
-static long syscall_hook_demo_exit(void *__user reserved)
+static long exit(void __user *reserved)
 {
     if (misc_deregister_func)
         misc_deregister_func(&my_misc_device);
-    pr_info("KernelMemorySky: device unregistered\n");
+    printk(KERN_INFO "KernelMemorySky: unloaded\n");
     return 0;
 }
 
-KPM_INIT(syscall_hook_demo_init);
-KPM_CTL0(syscall_hook_control0);
-KPM_EXIT(syscall_hook_demo_exit);
+KPM_INIT(init);
+KPM_CTL0(control0);
+KPM_EXIT(exit);
