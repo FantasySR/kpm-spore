@@ -1,0 +1,37 @@
+name: Build KPM Modules
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup CMake
+        uses: lukka/get-cmake@latest
+
+      - name: Setup NDK
+        run: |
+          wget -q https://dl.google.com/android/repository/android-ndk-r27c-linux.zip
+          unzip -q android-ndk-r27c-linux.zip
+          echo "ANDROID_NDK=$PWD/android-ndk-r27c" >> $GITHUB_ENV
+
+      - name: Build
+        run: |
+          mkdir build && cd build
+          cmake .. \
+            -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK/build/cmake/android.toolchain.cmake \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-31
+          make -j$(nproc)
+
+      - name: Upload KPM files
+        uses: actions/upload-artifact@v4
+        with:
+          name: kpm-modules
+          path: build/outputs/*.kpm
