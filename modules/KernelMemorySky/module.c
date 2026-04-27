@@ -12,9 +12,14 @@
 
 /* 前向声明 struct device 和 struct list_head，避免包含 linux/device.h */
 struct device;
-struct list_head {
-    struct list_head *next, *prev;
-};
+struct kiocb;
+struct iov_iter;
+struct poll_table_struct;
+struct vm_area_struct;
+struct file_lock;
+struct page;
+struct pipe_inode_info;
+struct seq_file;
 
 KPM_NAME("KernelMemorySky");
 KPM_VERSION("1.0.0");
