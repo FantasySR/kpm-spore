@@ -1,9 +1,9 @@
 set(MODULE_NAME KernelMemorySky)
 set(MODULE_SOURCES
-    ${CMAKE_CURRENT_SOURCE_DIR}/module.c
+    ${CMAKE_SOURCE_DIR}/modules/KernelMemorySky/module.c
 )
 set(MODULE_LDS
-    ${CMAKE_CURRENT_SOURCE_DIR}/module.lds
+    ${CMAKE_SOURCE_DIR}/modules/KernelMemorySky/module.lds
 )
 set(MODULE_INFO
     "KPM_NAME(\"KernelMemorySky\")"
